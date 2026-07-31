@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Icon } from "../lib/icons";
 import ScoreRing from "../components/ScoreRing";
 import { ROLES, TEMPLATE_SECTIONS } from "../data/constants";
@@ -171,10 +171,93 @@ export function AuditPage({ auditLogs }) {
 }
 
 export function SettingsPage() {
+  const fileInputRef = useRef(null);
+
+  const handleExport = () => {
+    // Collect all FIMS data from localStorage
+    const backupData = {
+      fims_inspections: JSON.parse(localStorage.getItem("fims_inspections") || "[]"),
+      fims_users: JSON.parse(localStorage.getItem("fims_users") || "[]"),
+      fims_locations: JSON.parse(localStorage.getItem("fims_locations") || "[]"),
+      fims_logs: JSON.parse(localStorage.getItem("fims_logs") || "[]"),
+      fims_notifs: JSON.parse(localStorage.getItem("fims_notifs") || "[]"),
+      fims_messages: JSON.parse(localStorage.getItem("fims_messages") || "[]"),
+      fims_announcements: JSON.parse(localStorage.getItem("fims_announcements") || "[]"),
+      fims_dismissed: JSON.parse(localStorage.getItem("fims_dismissed") || "[]"),
+      fims_current_user: JSON.parse(localStorage.getItem("fims_current_user") || "null"),
+      exportDate: new Date().toISOString()
+    };
+
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `FIMS_Backup_${new Date().toISOString().split("T")[0]}.json`;
+    link.click();
+  };
+
+  const handleImport = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!window.confirm("Restoring data will OVERWRITE everything currently in the app. Are you sure?")) {
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target.result);
+        
+        // Restore all keys to localStorage
+        Object.keys(data).forEach(key => {
+          if (key !== "exportDate" && data[key] !== null) {
+            localStorage.setItem(key, JSON.stringify(data[key]));
+          }
+        });
+
+        alert("Backup restored successfully! The app will now reload.");
+        window.location.reload();
+      } catch (err) {
+        alert("Error: Invalid backup file.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
   return (
     <div>
-      <div className="page-header"><div><div className="page-title">Configurações</div><div className="page-sub">Parâmetros globais</div></div></div>
-      <div className="card"><div style={{ fontSize: 13, color: "#888", textAlign: "center", padding: 40 }}>Configurações do sistema aparecerão aqui.</div></div>
+      <div className="page-header">
+        <div><div className="page-title">Configurações do Sistema</div><div className="page-sub">Backup, Recuperação e Parâmetros</div></div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 15, marginBottom: 12, color: "#1E2A3A" }}>Backup & Recovery</h3>
+        <p style={{ fontSize: 13, color: "#666", marginBottom: 16 }}>
+          Download a complete backup file of all inspections, users, schedules, and logs. Keep this file safe. If you ever lose data (e.g., phone reset, browser cache cleared), you can upload this file to restore everything instantly.
+        </p>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <button className="btn btn-primary" onClick={handleExport}>
+            <Icon name="download" size={14} /> Download Backup (.json)
+          </button>
+          <button className="btn btn-secondary" onClick={() => fileInputRef.current.click()}>
+            <Icon name="file" size={14} /> Restore from Backup
+          </button>
+          <input ref={fileInputRef} type="file" accept=".json" style={{ display: "none" }} onChange={handleImport} />
+        </div>
+      </div>
+
+      <div className="card">
+        <h3 style={{ fontSize: 15, marginBottom: 12, color: "#1E2A3A" }}>System Information</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+          {[["Versão", "FIMS v1.0.0"], ["Ambiente", "Produção (Frontend)"], ["Base de Dados", "LocalStorage"], ["Stack", "React + Vite"]].map(([k, v]) => (
+            <div key={k} style={{ background: "#F8F7F4", borderRadius: 8, padding: "10px 12px" }}>
+              <div style={{ fontSize: 11, color: "#888" }}>{k}</div>
+              <div style={{ fontSize: 13, fontWeight: 500, marginTop: 2 }}>{v}</div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

@@ -211,7 +211,7 @@ export function SupervisorDashboard({ inspections, users, currentUser, onView })
   );
 }
 
-export function InspectorDashboard({ inspections, users, currentUser, onStartInspection, onCreate, onAcceptTask, onDeclineTask, onRequestLeave }) {
+export function InspectorDashboard({ inspections, users, currentUser, onStartInspection, onAcceptTask, onDeclineTask, onRequestLeave }) {
   const { t } = useLang();
   const { announcements, dismissedAnn, dismissAnnouncement } = useComms();
   const myInsp = inspections.filter(i => i.inspector_id === currentUser.id && i.type !== "leave");
@@ -276,12 +276,6 @@ export function InspectorDashboard({ inspections, users, currentUser, onStartIns
               ))}
             </div>
           )}
-
-          <div className="card" style={{ marginBottom: 16, textAlign: "center", padding: 32, border: "1px dashed #ccc" }} className="no-print">
-            <h3 style={{ marginBottom: 8 }}>{t.quick_start}</h3>
-            <p style={{ color: "#888", fontSize: 13, marginBottom: 16 }}>Start a new inspection report</p>
-            <button className="btn btn-primary" onClick={onCreate}><Icon name="plus" size={14} /> {t.new_inspection}</button>
-          </div>
 
           {assigned.length > 0 && (
             <div className="card" style={{ marginBottom: 16 }}>

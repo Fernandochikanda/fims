@@ -1,11 +1,13 @@
-import { SEED_LOCATIONS, TEMPLATE_SECTIONS } from "../data/constants";
+import { SEED_LOCATIONS } from "../data/constants";
+import { getTemplate } from "../data/clientTemplates";
 
 export function genId() { return Date.now() + Math.random().toString(36).slice(2); }
 
 export function isItemComplete(item, photoCountForItem) {
-  return item.score !== null && item.score !== undefined
-    && !!(item.comment && item.comment.trim())
-    && (photoCountForItem || 0) >= 3; 
+  if (item.score === null || item.score === undefined) return false;
+  if (!item.comment || !item.comment.trim()) return false;
+  if (item.score <= 3 && (photoCountForItem || 0) < 3) return false;
+  return true;
 }
 
 export function scoreLabel(pct) {
@@ -41,11 +43,17 @@ export function genSeedInspections() {
     const daysAgo = Math.floor(Math.random() * 180);
     const date = new Date(); date.setDate(date.getDate() - daysAgo);
     
-    const items = TEMPLATE_SECTIONS.flatMap(s => s.items.map(item => ({
+    // Load dynamic template for this specific location
+    const template = loc.getTemplate();
+    const templateSections = template.sections;
+    
+    const items = templateSections.flatMap(s => s.items.map(item => ({
       ...item, section_id: s.id,
       score: Math.floor(Math.random() * 3) + 3, 
       comment: "Tudo conforme os padrões exigidos.", photos: []
     })));
+    const sections = templateSections.map(s => ({ id: s.id, observation: "", photos: [] }));
+    
     const pct = calcScore(items);
     
     inspections.push({
@@ -56,33 +64,40 @@ export function genSeedInspections() {
       status: statuses[i % statuses.length],
       score_pct: pct,
       date: date.toISOString().split("T")[0],
-      items, notes: "Inspeção de rotina realizada sem problemas.",
+      items, sections,
+      notes: "Inspeção de rotina realizada sem problemas.",
       alert_level: pct < 60 ? "critical" : pct < 75 ? "warning" : "ok",
       type: "inspection", accepted: true
     });
   }
 
+  const pendingLoc = locations.find(l => l.name === "Baker Hughes");
+  const pendingTemplate = pendingLoc.getTemplate();
   const pending = {
     id: "pending-1", location_id: 1, location_name: "Baker Hughes",
     inspector_id: 4, inspector_name: "João Tembe",
     supervisor_id: 3, supervisor_name: "Ana Sitoe",
     status: "pending", score_pct: null, date: new Date().toISOString().split("T")[0],
-    items: TEMPLATE_SECTIONS.flatMap(s => s.items.map(item => ({ ...item, section_id: s.id, score: null, comment: "", photos: [] }))),
+    items: pendingTemplate.sections.flatMap(s => s.items.map(item => ({ ...item, section_id: s.id, score: null, comment: "", photos: [] }))),
+    sections: pendingTemplate.sections.map(s => ({ id: s.id, observation: "", photos: [] })),
     notes: "", alert_level: "ok", type: "inspection", accepted: true
   };
+  
+  const inprogLoc = locations.find(l => l.name === "FCDO");
+  const inprogTemplate = inprogLoc.getTemplate();
   const inprog = {
     id: "inprog-1", location_id: 14, location_name: "FCDO",
     inspector_id: 5, inspector_name: "Maria Nhantumbo",
     supervisor_id: 3, supervisor_name: "Ana Sitoe",
     status: "in_progress", score_pct: null, date: new Date().toISOString().split("T")[0],
-    items: TEMPLATE_SECTIONS.flatMap(s => s.items.map(item => ({ ...item, section_id: s.id, score: null, comment: "", photos: [] }))),
+    items: inprogTemplate.sections.flatMap(s => s.items.map(item => ({ ...item, section_id: s.id, score: null, comment: "", photos: [] }))),
+    sections: inprogTemplate.sections.map(s => ({ id: s.id, observation: "", photos: [] })),
     notes: "", alert_level: "ok", type: "inspection", accepted: true
   };
   
   return [pending, inprog, ...inspections];
 }
 
-// --- NEW CEO ANALYTICS HELPERS ---
 export const SLA_TARGET = 85;
 
 export function getMonthlyTrend(inspections) {
@@ -92,7 +107,6 @@ export function getMonthlyTrend(inspections) {
     const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
     months.push({ key: d.toISOString().substring(0, 7), label: d.toLocaleDateString("pt-PT", { month: "short" }) });
   }
-
   return months.map(m => {
     const monthInsps = inspections.filter(i => i.date.startsWith(m.key) && i.score_pct !== null);
     const avg = monthInsps.length ? Math.round(monthInsps.reduce((s, i) => s + i.score_pct, 0) / monthInsps.length) : 0;
@@ -103,18 +117,12 @@ export function getMonthlyTrend(inspections) {
 
 export function getClientRisk(inspections, locations) {
   return locations.map(loc => {
-    const locInsps = inspections.filter(i => i.location_id === loc.id && i.score_pct !== null)
-                                .sort((a,b) => new Date(b.date) - new Date(a.date));
+    const locInsps = inspections.filter(i => i.location_id === loc.id && i.score_pct !== null).sort((a,b) => new Date(b.date) - new Date(a.date));
     const avg = locInsps.length ? Math.round(locInsps.reduce((s,i) => s + i.score_pct, 0) / locInsps.length) : null;
-    
-    // Churn risk: Last 3 scores are strictly decreasing
     let churnRisk = false;
     if (locInsps.length >= 3) {
-      if (locInsps[0].score_pct < locInsps[1].score_pct && locInsps[1].score_pct < locInsps[2].score_pct) {
-        churnRisk = true;
-      }
+      if (locInsps[0].score_pct < locInsps[1].score_pct && locInsps[1].score_pct < locInsps[2].score_pct) churnRisk = true;
     }
-    
     const belowSla = avg !== null && avg < SLA_TARGET;
     return { ...loc, avg, count: locInsps.length, churnRisk, belowSla, lastScore: locInsps[0]?.score_pct };
   }).filter(l => l.avg !== null && (l.belowSla || l.churnRisk));
@@ -126,9 +134,5 @@ export function getTopBottomPerformers(inspections, locations) {
     const avg = li.length ? Math.round(li.reduce((s,i) => s+i.score_pct, 0) / li.length) : 0;
     return { name: loc.name, avg };
   }).filter(l => l.avg > 0);
-
-  return {
-    top: [...stats].sort((a,b) => b.avg - a.avg).slice(0, 3),
-    bottom: [...stats].sort((a,b) => a.avg - b.avg).slice(0, 3)
-  };
+  return { top: [...stats].sort((a,b) => b.avg - a.avg).slice(0, 3), bottom: [...stats].sort((a,b) => a.avg - b.avg).slice(0, 3) };
 }

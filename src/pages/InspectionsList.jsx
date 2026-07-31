@@ -14,6 +14,9 @@ export default function InspectionsList({ inspections, currentUser, onView, onCr
   if (search) list = list.filter(i => i.location_name.toLowerCase().includes(search.toLowerCase()) || i.inspector_name.toLowerCase().includes(search.toLowerCase()));
   if (statusFilter !== "all") list = list.filter(i => i.status === statusFilter);
 
+  // ONLY Admin and Supervisor can create manual inspections
+  const canCreate = [ROLES.ADMIN, ROLES.SUPERVISOR].includes(currentUser.role);
+
   return (
     <div>
       <div className="page-header">
@@ -21,7 +24,7 @@ export default function InspectionsList({ inspections, currentUser, onView, onCr
           <div className="page-title">Inspeções</div>
           <div className="page-sub">{list.length} inspeção(ões) encontrada(s)</div>
         </div>
-        {[ROLES.ADMIN, ROLES.SUPERVISOR, ROLES.INSPECTOR].includes(currentUser.role) && (
+        {canCreate && (
           <button className="btn btn-primary btn-sm" onClick={onCreate}><Icon name="plus" size={13} />Nova Inspeção</button>
         )}
       </div>
@@ -33,10 +36,12 @@ export default function InspectionsList({ inspections, currentUser, onView, onCr
         </div>
         <select className="form-select" style={{ width: 160 }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
           <option value="all">Todos os status</option>
+          <option value="pending_acceptance">Aguarda Aceitação</option>
           <option value="pending">Pendente</option>
           <option value="in_progress">Em Progresso</option>
           <option value="submitted">Submetida</option>
-          <option value="reviewed">Revisada</option>
+          <option value="needs_corrections">Rejeitada (Corrigir)</option>
+          <option value="reviewed">Aprovada</option>
           <option value="closed">Fechada</option>
         </select>
       </div>
@@ -55,7 +60,7 @@ export default function InspectionsList({ inspections, currentUser, onView, onCr
             </tr>
           </thead>
           <tbody>
-            {list.slice(0, 50).map(insp => (
+            {list.slice(0, 100).map(insp => (
               <tr key={insp.id}>
                 <td style={{ fontWeight: 500 }}>{insp.location_name}</td>
                 {canSeeAll && <td style={{ color: "#888" }}>{insp.inspector_name}</td>}
