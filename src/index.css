@@ -411,3 +411,30 @@ th {
     height: 100px !important;
   }
 }
+
+/* ===== ADVANCED PHOTO LIGHTBOX ===== */
+.photo-lightbox-overlay {
+  background: rgba(0,0,0,0.9);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+.photo-lightbox-overlay img {
+  max-width: 90%;
+  max-height: 80vh;
+  border-radius: 8px;
+  object-fit: contain;
+}
+.photo-lightbox-caption {
+  color: #fff;
+  background: rgba(30, 42, 58, 0.9);
+  padding: 12px 20px;
+  border-radius: 8px;
+  margin-top: 16px;
+  font-size: 13px;
+  text-align: center;
+  max-width: 400px;
+}
+.photo-lightbox-caption strong { color: #378ADD; }

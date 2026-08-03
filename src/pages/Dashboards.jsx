@@ -3,11 +3,44 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import ScoreRing from "../components/ScoreRing";
 import StatusBadge from "../components/StatusBadge";
 import { Icon } from "../lib/icons";
-import { calcScore, scoreLabel, getMonthlyTrend, getClientRisk, getTopBottomPerformers, SLA_TARGET } from "../lib/helpers";
-import { ROLES } from "../data/constants";
+import { calcScore, scoreLabel, getMonthlyTrend, getClientRisk, getTopBottomPerformers, SLA_TARGET, getCategoryHealth } from "../lib/helpers";
+import { ROLES, TEMPLATE_SECTIONS } from "../data/constants";
 import { useLang } from "../context/LangContext";
 import { useComms } from "../context/CommsContext";
 import { useState } from "react";
+
+// Helper to calculate company-wide analytics
+function getCompanyAnalytics(inspections) {
+  const submitted = inspections.filter(i => i.score_pct !== null);
+  const catScores = {};
+  const issueMap = {};
+
+  submitted.forEach(insp => {
+    insp.items.forEach(item => {
+      if (item.score !== null) {
+        const secName = TEMPLATE_SECTIONS.find(s => s.id === item.section_id)?.name || "Unknown";
+        if (!catScores[secName]) catScores[secName] = { total: 0, count: 0 };
+        catScores[secName].total += item.score;
+        catScores[secName].count++;
+
+        if (item.score <= 2) {
+          if (!issueMap[item.text]) issueMap[item.text] = 0;
+          issueMap[item.text]++;
+        }
+      }
+    });
+  });
+
+  const lowestCategories = Object.keys(catScores).map(name => ({
+    name,
+    avg: Number((catScores[name].total / catScores[name].count).toFixed(1))
+  })).sort((a, b) => a.avg - b.avg).slice(0, 3);
+
+  const commonIssues = Object.keys(issueMap).map(text => ({ text, count: issueMap[text] }))
+    .sort((a, b) => b.count - a.count).slice(0, 5);
+
+  return { lowestCategories, commonIssues };
+}
 
 export function CEODashboard({ inspections, locations, auditLogs, currentUser }) {
   const { announcements, createAnnouncement, dismissedAnn, dismissAnnouncement } = useComms();
@@ -20,8 +53,15 @@ export function CEODashboard({ inspections, locations, auditLogs, currentUser })
   const trendData = getMonthlyTrend(inspections);
   const riskClients = getClientRisk(inspections, locations);
   const performers = getTopBottomPerformers(inspections, locations);
+  const analytics = getCompanyAnalytics(inspections);
+  
   const slaCompliance = Math.round((locations.filter(l => { const li = submitted.filter(i => i.location_id === l.id); return li.length ? (li.reduce((s,i) => s+i.score_pct, 0) / li.length) >= SLA_TARGET : false; }).length / locations.length) * 100);
-  const highLevelLogs = auditLogs.filter(l => ["review", "notification", "schedule"].includes(l.type)).slice(0, 5);
+  const failedSlaCount = locations.length - Math.round((slaCompliance / 100) * locations.length);
+  const estimatedPenaltyRisk = failedSlaCount * 15000;
+  const excellentClients = locations.filter(l => { const li = submitted.filter(i => i.location_id === l.id); return li.length ? (li.reduce((s,i) => s+i.score_pct, 0) / li.length) >= 95 : false; }).length;
+  const inspectorBonusPool = excellentClients * 5000;
+
+  const highLevelLogs = auditLogs.filter(l => ["review", "notification", "schedule", "capa_alert"].includes(l.type)).slice(0, 5);
 
   const handleBoardroomPDF = () => {
     const doc = new jsPDF();
@@ -32,16 +72,18 @@ export function CEODashboard({ inspections, locations, auditLogs, currentUser })
     doc.text(`Overall Company Score: ${avgScore}%`, 14, 55);
     doc.text(`SLA Compliance (Target ${SLA_TARGET}%): ${slaCompliance}%`, 14, 63);
     doc.text(`Active Critical Alerts: ${critical}`, 14, 71);
-    doc.setFontSize(16); doc.text("Top 3 Performing Clients", 14, 90);
+    doc.text(`Financial Penalty Risk: ${estimatedPenaltyRisk.toLocaleString()} MT`, 14, 79);
+    doc.text(`Inspector Bonus Pool: ${inspectorBonusPool.toLocaleString()} MT`, 14, 87);
+    doc.setFontSize(16); doc.text("Top 3 Performing Clients", 14, 105);
     doc.setFontSize(12);
-    performers.top.forEach((p, i) => doc.text(`${i+1}. ${p.name} (${p.avg}%)`, 14, 100 + (i*8)));
-    doc.setFontSize(16); doc.text("Bottom 3 Clients (Needs Attention)", 14, 130);
+    performers.top.forEach((p, i) => doc.text(`${i+1}. ${p.name} (${p.avg}%)`, 14, 115 + (i*8)));
+    doc.setFontSize(16); doc.text("Bottom 3 Clients (Needs Attention)", 14, 145);
     doc.setFontSize(12);
-    performers.bottom.forEach((p, i) => doc.text(`${i+1}. ${p.name} (${p.avg}%)`, 14, 140 + (i*8)));
-    doc.setFontSize(16); doc.text("High Churn Risk / SLA Failures", 14, 170);
+    performers.bottom.forEach((p, i) => doc.text(`${i+1}. ${p.name} (${p.avg}%)`, 14, 155 + (i*8)));
+    doc.setFontSize(16); doc.text("High Churn Risk / SLA Failures", 14, 185);
     doc.setFontSize(12);
-    if (riskClients.length === 0) doc.text("None", 14, 180);
-    riskClients.slice(0, 5).forEach((c, i) => doc.text(`- ${c.name} (Avg: ${c.avg}%)`, 14, 180 + (i*8)));
+    if (riskClients.length === 0) doc.text("None", 14, 195);
+    riskClients.slice(0, 5).forEach((c, i) => doc.text(`- ${c.name} (Avg: ${c.avg}%)`, 14, 195 + (i*8)));
     doc.save("FIMS-Executive-Summary.pdf");
   };
 
@@ -67,8 +109,8 @@ export function CEODashboard({ inspections, locations, auditLogs, currentUser })
       <div className="metric-grid">
         <div className="metric-card"><div className="metric-label">Global Score</div><div className="metric-value" style={{ color: scoreLabel(avgScore).color }}>{avgScore}%</div></div>
         <div className="metric-card"><div className="metric-label">SLA Compliance ({SLA_TARGET}%)</div><div className="metric-value" style={{ color: slaCompliance >= 80 ? "#0F6E56" : "#A32D2D" }}>{slaCompliance}%</div></div>
-        <div className="metric-card"><div className="metric-label">Active Alerts</div><div className="metric-value" style={{ color: critical ? "#A32D2D" : "#3B6D11" }}>{critical}</div></div>
-        <div className="metric-card"><div className="metric-label">Active Clients</div><div className="metric-value">{locations.length}</div></div>
+        <div className="metric-card"><div className="metric-label">Penalty Risk</div><div className="metric-value" style={{ color: estimatedPenaltyRisk > 0 ? "#A32D2D" : "#3B6D11" }}>{estimatedPenaltyRisk.toLocaleString()} MT</div></div>
+        <div className="metric-card"><div className="metric-label">Bonus Pool</div><div className="metric-value" style={{ color: "#0F6E56" }}>{inspectorBonusPool.toLocaleString()} MT</div></div>
       </div>
 
       <div className="two-col" style={{ marginBottom: 16 }}>
@@ -100,6 +142,32 @@ export function CEODashboard({ inspections, locations, auditLogs, currentUser })
         </div>
       </div>
 
+      {/* NEW: Company Analytics */}
+      <div className="two-col" style={{ marginBottom: 16 }}>
+        <div className="card">
+          <h3 style={{ fontSize: 15, marginBottom: 12, color: "#A32D2D" }}>Lowest Scoring Categories (Company-wide)</h3>
+          {analytics.lowestCategories.map((cat, i) => (
+            <div key={i} style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                <span style={{ color: "#444" }}>{cat.name}</span>
+                <span style={{ fontWeight: 600, color: cat.avg <= 2 ? "#A32D2D" : "#BA7517" }}>{cat.avg} / 5.0</span>
+              </div>
+              <div className="progress-bar"><div className="progress-fill" style={{ width: `${(cat.avg/5)*100}%`, background: cat.avg <= 2 ? "#A32D2D" : "#BA7517" }} /></div>
+            </div>
+          ))}
+        </div>
+        <div className="card">
+          <h3 style={{ fontSize: 15, marginBottom: 12, color: "#A32D2D" }}>Most Common Issues (Score 1-2)</h3>
+          {analytics.commonIssues.length === 0 && <div style={{ fontSize: 13, color: "#888" }}>No critical issues found.</div>}
+          {analytics.commonIssues.map((issue, i) => (
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #eee" }}>
+              <div style={{ fontSize: 13, fontWeight: 500, flex: 1, paddingRight: 8 }}>{issue.text}</div>
+              <span className="badge badge-critical">{issue.count}x</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div className="two-col">
         <div className="card">
           <h3 style={{ fontSize: 15, marginBottom: 12, color: "#A32D2D" }}>Client Churn Risk & SLA Failures</h3>
@@ -119,7 +187,7 @@ export function CEODashboard({ inspections, locations, auditLogs, currentUser })
           {highLevelLogs.length === 0 && <div style={{ fontSize: 13, color: "#888" }}>No recent management activity.</div>}
           {highLevelLogs.map(log => (
             <div key={log.id} style={{ display: "flex", gap: 10, padding: "8px 0", borderBottom: "1px solid #eee" }}>
-              <StatusBadge status={log.type === "review" ? "reviewed" : log.type === "notification" ? "submitted" : "progress"} />
+              <StatusBadge status={log.type === "review" ? "reviewed" : log.type === "capa_alert" ? "critical" : log.type === "notification" ? "submitted" : "progress"} />
               <div><div style={{ fontSize: 13, fontWeight: 500 }}>{log.user} - {log.action}</div><div style={{ fontSize: 11, color: "#888" }}>{log.detail}</div></div>
             </div>
           ))}
@@ -158,6 +226,7 @@ export function SupervisorDashboard({ inspections, users, currentUser, onView })
   const reviewList = myInsp.filter(i => i.status === "submitted").slice(0, 5);
   const criticalAlerts = myInsp.filter(i => i.alert_level === "critical" && !i.resolved).slice(0, 5);
   const activeAnnouncements = announcements.filter(a => !dismissedAnn.some(d => d.annId === a.id && d.userId === currentUser.id));
+  const analytics = getCompanyAnalytics(inspections);
 
   return (
     <div>
@@ -176,6 +245,33 @@ export function SupervisorDashboard({ inspections, users, currentUser, onView })
         <div className="metric-card"><div className="metric-label">Under Review</div><div className="metric-value" style={{ color: "#534AB7" }}>{underReview}</div></div>
         <div className="metric-card"><div className="metric-label">Alerts</div><div className="metric-value" style={{ color: alerts ? "#A32D2D" : "#3B6D11" }}>{alerts}</div></div>
       </div>
+
+      {/* NEW: Company Analytics */}
+      <div className="two-col" style={{ marginBottom: 16 }}>
+        <div className="card">
+          <h3 style={{ fontSize: 15, marginBottom: 12, color: "#A32D2D" }}>Lowest Scoring Categories (Company-wide)</h3>
+          {analytics.lowestCategories.map((cat, i) => (
+            <div key={i} style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                <span style={{ color: "#444" }}>{cat.name}</span>
+                <span style={{ fontWeight: 600, color: cat.avg <= 2 ? "#A32D2D" : "#BA7517" }}>{cat.avg} / 5.0</span>
+              </div>
+              <div className="progress-bar"><div className="progress-fill" style={{ width: `${(cat.avg/5)*100}%`, background: cat.avg <= 2 ? "#A32D2D" : "#BA7517" }} /></div>
+            </div>
+          ))}
+        </div>
+        <div className="card">
+          <h3 style={{ fontSize: 15, marginBottom: 12, color: "#A32D2D" }}>Most Common Issues (Score 1-2)</h3>
+          {analytics.commonIssues.length === 0 && <div style={{ fontSize: 13, color: "#888" }}>No critical issues found.</div>}
+          {analytics.commonIssues.map((issue, i) => (
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #eee" }}>
+              <div style={{ fontSize: 13, fontWeight: 500, flex: 1, paddingRight: 8 }}>{issue.text}</div>
+              <span className="badge badge-critical">{issue.count}x</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div className="two-col">
         <div className="card">
           <h3 style={{ fontSize: 15, marginBottom: 12 }}>Overall Productivity</h3>

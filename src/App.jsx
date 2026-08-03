@@ -8,6 +8,7 @@ import InspectionForm from "./pages/InspectionForm";
 import InspectionsList from "./pages/InspectionsList";
 import InspectionDetail from "./pages/InspectionDetail";
 import MonthlyReport from "./pages/MonthlyReport";
+import ReportCenter from "./pages/ReportCenter";
 import Alerts from "./pages/Alerts";
 import Schedule from "./pages/Schedule";
 import LiveMap from "./pages/LiveMap";
@@ -121,7 +122,7 @@ function AppContent() {
     dashboard: "Dashboard", inspections: "Inspeções", alerts: "Alertas", reports: "Relatórios",
     users: "Utilizadores", locations: "Localizações", templates: "Templates",
     audit: "Auditoria", settings: "Configurações", monthly_report: "Relatório Mensal",
-    schedule: "Operations Calendar", field_map: "Mapa de Campo", team: "Equipa (KPIs)", messages: "Mensagens"
+    schedule: "Operations Calendar", field_map: "Mapa de Campo", team: "Equipa (KPIs)", messages: "Mensagens", report_center: "Centro de Relatórios"
   };
 
   const addAuditLog = (user, action, type, detail) => {
@@ -153,6 +154,15 @@ function AppContent() {
     setInspections(prev => prev.map(i => i.id === updated.id ? updated : i)); setEditingInspection(null); setPage("inspections");
     addAuditLog(currentUser, "Notificação Enviada", "notification", `Email e WhatsApp enviados para o Supervisor (${updated.supervisor_name}) sobre a inspeção em ${updated.location_name}`);
     notify(3, `Nova inspeção submetida por ${currentUser.name} para ${updated.location_name}.`, "inspections");
+    
+    const lowScoreItems = updated.items.filter(i => i.score !== null && i.score <= 2);
+    if (lowScoreItems.length > 0) {
+      const capaDeadline = new Date();
+      capaDeadline.setHours(capaDeadline.getHours() + 48);
+      addAuditLog(currentUser, "CAPA Alert Triggered", "capa_alert", `${lowScoreItems.length} item(s) scored 1-2 at ${updated.location_name}. Corrective action required by ${capaDeadline.toLocaleString("pt-PT")}.`);
+      notify(3, `⚠️ CAPA ALERT: ${updated.location_name} has ${lowScoreItems.length} critical defect(s). Fix within 48 hours.`, "inspections");
+      notify(2, `⚠️ CAPA ALERT: ${updated.location_name} has ${lowScoreItems.length} critical defect(s). Supervisor has been notified.`, "inspections");
+    }
   };
   
   const handleCreateInspection = (insp) => { setInspections(prev => [insp, ...prev]); setShowNewModal(false); setEditingInspection(insp); setPage("inspections"); };
@@ -170,14 +180,12 @@ function AppContent() {
     tasks.forEach(t => { if(t.inspector_id) notify(t.inspector_id, `Nova tarefa agendada para ${t.date} no local ${t.location_name}.`, "schedule"); });
   };
 
-  // Bulk Scheduling Handler
   const handleBulkSchedule = (tasks) => {
     setInspections(prev => [...tasks, ...prev]); setShowBulkModal(false);
     addAuditLog(currentUser, "Despacho Múltiplo Criado", "schedule", `Agendou ${tasks.length} tarefas via bulk scheduling.`);
     tasks.forEach(t => { if(t.inspector_id) notify(t.inspector_id, `Nova tarefa agendada para ${t.date} no local ${t.location_name}.`, "schedule"); });
   };
 
-  // Handle Drag & Drop Updates
   const handleDragUpdate = (updated, notifyInspector = true) => {
     setInspections(prev => prev.map(i => i.id === updated.id ? updated : i));
     if (notifyInspector && updated.inspector_id) {
@@ -226,13 +234,14 @@ function AppContent() {
       <div className="main">
         <Topbar title={editingInspection ? editingInspection.location_name : viewingInspection ? viewingInspection.location_name : topBarTitles[page] || "FIMS"} onMenuClick={() => setSidebarOpen(true)} onLogout={handleLogout} currentUser={currentUser} onNavigate={handleNavigate} />
         <div className="page scrollbar-thin">
-          {editingInspection ? <InspectionForm inspection={editingInspection} onSave={handleSaveInspection} onSubmit={handleSubmitInspection} onBack={() => { setEditingInspection(null); setPage("inspections"); }} /> 
-          : viewingInspection ? <InspectionDetail inspection={viewingInspection} currentUser={currentUser} onBack={() => setViewingInspection(null)} onUpdate={handleUpdateInspection} addAuditLog={addAuditLog} /> 
+          {editingInspection ? <InspectionForm inspection={editingInspection} onSave={handleSaveInspection} onSubmit={handleSubmitInspection} onBack={() => { setEditingInspection(null); setPage("inspections"); }} allInspections={inspections} /> 
+          : viewingInspection ? <InspectionDetail inspection={viewingInspection} currentUser={currentUser} onBack={() => setViewingInspection(null)} onUpdate={handleUpdateInspection} addAuditLog={addAuditLog} allInspections={inspections} /> 
           : page === "dashboard" ? (
             currentUser.role === ROLES.CEO || currentUser.role === ROLES.ADMIN ? <CEODashboard inspections={inspections} locations={locations} auditLogs={auditLogs} currentUser={currentUser} />
             : currentUser.role === ROLES.SUPERVISOR ? <SupervisorDashboard inspections={inspections} users={users} currentUser={currentUser} onView={handleViewInspection} />
             : <InspectorDashboard inspections={inspections} users={users} currentUser={currentUser} onStartInspection={handleStartInspection} onAcceptTask={handleAcceptTask} onDeclineTask={handleDeclineTask} onRequestLeave={handleRequestLeave} />
           ) : page === "inspections" ? <InspectionsList inspections={inspections} currentUser={currentUser} onView={handleViewInspection} onCreate={() => setShowNewModal(true)} />
+          : page === "report_center" ? <ReportCenter inspections={inspections} locations={locations} users={users} />
           : page === "messages" ? <Messages users={users} currentUser={currentUser} />
           : page === "alerts" ? <Alerts inspections={inspections} onView={handleViewInspection} onUpdate={handleUpdateInspection} />
           : page === "schedule" ? (
@@ -243,7 +252,7 @@ function AppContent() {
               <Schedule inspections={inspections} users={users} onUpdate={handleDragUpdate} onOpenModal={() => setShowScheduleModal(true)} onReschedule={setReschedulingTask} onBulkSchedule={() => setShowBulkModal(true)} />
             </div>
           )
-          : page === "field_map" ? <LiveMap inspections={inspections} />
+          : page === "field_map" ? <LiveMap inspections={inspections} users={users} onRefresh={async () => { /* Future: await api.getInspections() */ return; }} refreshIntervalMs={45000} />
           : page === "team" ? <Team users={users} inspections={inspections} />
           : page === "monthly_report" ? <MonthlyReport inspections={inspections} locations={locations} />
           : page === "reports" ? <ReportsPage inspections={inspections} locations={locations} users={users} />

@@ -3,10 +3,15 @@ import { getTemplate } from "../data/clientTemplates";
 
 export function genId() { return Date.now() + Math.random().toString(36).slice(2); }
 
+// UPDATED LOGIC: Notes and 3 photos are ONLY mandatory if score is 1, 2, or 3.
 export function isItemComplete(item, photoCountForItem) {
   if (item.score === null || item.score === undefined) return false;
-  if (!item.comment || !item.comment.trim()) return false;
-  if (item.score <= 3 && (photoCountForItem || 0) < 3) return false;
+  
+  if (item.score <= 3) {
+    if (!item.comment || !item.comment.trim()) return false;
+    if ((photoCountForItem || 0) < 3) return false;
+  }
+  
   return true;
 }
 
@@ -18,12 +23,48 @@ export function scoreLabel(pct) {
   return { label: "Mau", color: "#A32D2D" };
 }
 
+export function getRiskLevel(score) {
+  if (score === 1) return { label: "Critical", color: "#A32D2D" };
+  if (score === 2) return { label: "High Risk", color: "#993C1D" };
+  if (score === 3) return { label: "Medium Risk", color: "#BA7517" };
+  if (score === 4) return { label: "Acceptable", color: "#3B6D11" };
+  if (score === 5) return { label: "Excellent", color: "#0F6E56" };
+  return { label: "N/A", color: "#888" };
+}
+
+export function getCategoryHealth(items) {
+  const answered = items.filter(i => i.score !== null);
+  if (!answered.length) return { avg: 0, health: 0, risk: "N/A", color: "#888" };
+  const total = answered.reduce((s, i) => s + Number(i.score), 0);
+  const avg = total / answered.length;
+  const health = Math.round((avg / 5) * 100);
+  const risk = avg <= 2 ? "High Risk" : avg <= 3 ? "Medium Risk" : avg <= 4 ? "Acceptable" : "Excellent";
+  const color = avg <= 2 ? "#A32D2D" : avg <= 3 ? "#BA7517" : avg <= 4 ? "#3B6D11" : "#0F6E56";
+  return { avg: avg.toFixed(1), health, risk, color };
+}
+
 export function calcScore(items) {
   const answered = items.filter(i => i.score !== null && i.score !== undefined);
   if (!answered.length) return null;
   const total = answered.reduce((s, i) => s + Number(i.score), 0);
   const maxPossible = answered.length * 5;
   return Math.round((total / maxPossible) * 100);
+}
+
+export function generateAISummary(items, locationName) {
+  const lowScores = items.filter(i => i.score !== null && i.score <= 2);
+  let summary = `The inspection at ${locationName} was conducted. `;
+  let recommendations = [];
+
+  if (lowScores.length === 0) {
+    summary += "Overall facility hygiene and maintenance are excellent. All areas meet the required SLA standards. No immediate corrective actions are required.";
+  } else {
+    summary += `${lowScores.length} critical issue(s) were identified requiring immediate attention. `;
+    lowScores.forEach(item => {
+      recommendations.push(`- **${item.text}**: Scored ${item.score}/5. ${item.comment || "No observation provided."} Corrective action required within 48 hours.`);
+    });
+  }
+  return { summary, recommendations };
 }
 
 export function genSeedInspections() {
@@ -43,8 +84,7 @@ export function genSeedInspections() {
     const daysAgo = Math.floor(Math.random() * 180);
     const date = new Date(); date.setDate(date.getDate() - daysAgo);
     
-    // Load dynamic template for this specific location
-    const template = loc.getTemplate();
+    const template = loc.getTemplate ? loc.getTemplate() : getTemplate(loc.name);
     const templateSections = template.sections;
     
     const items = templateSections.flatMap(s => s.items.map(item => ({
@@ -52,7 +92,7 @@ export function genSeedInspections() {
       score: Math.floor(Math.random() * 3) + 3, 
       comment: "Tudo conforme os padrões exigidos.", photos: []
     })));
-    const sections = templateSections.map(s => ({ id: s.id, observation: "", photos: [] }));
+    const sections = templateSections.map(s => ({ id: s.id, observation: "Operação padrão executada.", photos: [] }));
     
     const pct = calcScore(items);
     

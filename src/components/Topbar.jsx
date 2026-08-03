@@ -1,10 +1,22 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Icon } from "../lib/icons";
 import { useComms } from "../context/CommsContext";
 
 export default function Topbar({ title, onMenuClick, onLogout, currentUser, onNavigate }) {
   const { notifications, markAllRead } = useComms();
   const [showNotif, setShowNotif] = useState(false);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
   
   const myNotifs = notifications.filter(n => n.userId === currentUser.id && !n.read);
   const allMyNotifs = notifications.filter(n => n.userId === currentUser.id).slice(0, 10);
@@ -17,6 +29,9 @@ export default function Topbar({ title, onMenuClick, onLogout, currentUser, onNa
       <div className="topbar-title">{title}</div>
       <div className="topbar-spacer" />
       <div className="topbar-actions">
+        <div title={isOnline ? "Online" : "Offline Mode Active"} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: isOnline ? "#0F6E56" : "#EF9F27", marginRight: 8 }}>
+          <Icon name={isOnline ? "cloud" : "cloudOff"} size={14} /> {isOnline ? "Online" : "Offline"}
+        </div>
         <div style={{ position: "relative" }}>
           <button className="icon-btn notif-dot" onClick={() => { setShowNotif(!showNotif); if (!showNotif) markAllRead(currentUser.id); }}>
             <Icon name="bell" size={15} />
