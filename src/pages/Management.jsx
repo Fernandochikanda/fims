@@ -1,8 +1,11 @@
-import { useState, useRef } from "react";
+// /src/pages/Management.jsx
+import { useState, useRef, useEffect } from "react";
 import { Icon } from "../lib/icons";
 import ScoreRing from "../components/ScoreRing";
 import { ROLES, TEMPLATE_SECTIONS } from "../data/constants";
 import { scoreLabel } from "../lib/helpers";
+import { TemplateImporter } from "./Management/TemplateImporter";
+import { loadTemplatesFromStorage, getTemplateByClientName } from "../utils/excelTemplateImporter";
 
 export function UsersPage({ users, setUsers }) {
   const [showModal, setShowModal] = useState(false);
@@ -127,40 +130,518 @@ export function ReportsPage({ inspections, locations }) {
   );
 }
 
+// ============================================================
+// TEMPLATES PAGE - COMPLETO COM IMPORTAÇÃO DO EXCEL
+// ============================================================
 export function TemplatesPage() {
+  const [showImporter, setShowImporter] = useState(false);
+  const [templates, setTemplates] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
+  const [stats, setStats] = useState({ total: 0, totalItems: 0, totalSections: 0 });
+
+  useEffect(() => {
+    loadTemplates();
+  }, []);
+
+  const loadTemplates = () => {
+    const { clients } = loadTemplatesFromStorage();
+    setTemplates(clients);
+    
+    // Calcular estatísticas
+    const { templates: allTemplates } = loadTemplatesFromStorage();
+    const totalItems = Object.values(allTemplates).reduce((sum, t) => sum + (t.totalItems || 0), 0);
+    const totalSections = Object.values(allTemplates).reduce((sum, t) => sum + (t.sections || []).length, 0);
+    setStats({
+      total: clients.length,
+      totalItems: totalItems,
+      totalSections: totalSections
+    });
+  };
+
+  const handleImportComplete = (count) => {
+    loadTemplates();
+    setShowImporter(false);
+    if (count > 0) {
+      alert(`✅ ${count} templates importados com sucesso!`);
+    }
+  };
+
+  const handleViewTemplate = (clientId) => {
+    const { templates: allTemplates } = loadTemplatesFromStorage();
+    const template = allTemplates[clientId];
+    if (template) {
+      setSelectedTemplate(template);
+    }
+  };
+
+  const handleCloseTemplate = () => {
+    setSelectedTemplate(null);
+  };
+
+  const handleDeleteTemplate = (clientId) => {
+    if (!window.confirm('Tem certeza que deseja remover este template?')) return;
+    
+    const { templates: allTemplates } = loadTemplatesFromStorage();
+    delete allTemplates[clientId];
+    localStorage.setItem('fims_templates', JSON.stringify(allTemplates));
+    
+    // Atualizar lista de clientes
+    const clients = Object.keys(allTemplates).map(key => ({
+      id: allTemplates[key].clientId,
+      name: allTemplates[key].clientName,
+      sections: allTemplates[key].sections.length,
+      items: allTemplates[key].totalItems,
+      lastUpdated: allTemplates[key].lastUpdated
+    }));
+    localStorage.setItem('fims_template_clients', JSON.stringify(clients));
+    
+    loadTemplates();
+  };
+
+  const filteredTemplates = templates.filter(t => 
+    t.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
   return (
-    <div>
-      <div className="page-header"><div><div className="page-title">Templates de Inspeção</div><div className="page-sub">1 template ativo</div></div></div>
-      <div className="card">
-        <div style={{ fontSize: 15, fontWeight: 500, marginBottom: 16 }}>Relatório de Inspeção de Limpeza</div>
-        {TEMPLATE_SECTIONS.map(section => (
-          <div key={section.id} style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 13, fontWeight: 500, color: "#1E2A3A", marginBottom: 6, padding: "6px 0", borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>{section.name}</div>
-            {section.items.map(item => <div key={item.id} style={{ fontSize: 12, color: "#888", padding: "3px 0 3px 12px" }}>• {item.text}</div>)}
+    <div className="templates-page">
+      <div className="page-header">
+        <div>
+          <div className="page-title">📋 Templates de Inspeção</div>
+          <div className="page-sub">
+            {stats.total} clientes • {stats.totalSections} secções • {stats.totalItems} itens
+          </div>
+        </div>
+        <div className="header-actions">
+          <input
+            type="text"
+            placeholder="Buscar cliente..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="search-input"
+          />
+          <button 
+            className="btn btn-primary btn-sm"
+            onClick={() => setShowImporter(!showImporter)}
+          >
+            <Icon name="upload" size={13} />
+            {showImporter ? 'Fechar' : 'Importar Excel'}
+          </button>
+        </div>
+      </div>
+
+      {showImporter && (
+        <TemplateImporter onImportComplete={handleImportComplete} />
+      )}
+
+      {/* Modal de detalhes do template */}
+      {selectedTemplate && (
+        <div className="modal-overlay" onClick={handleCloseTemplate}>
+          <div className="modal template-detail-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ fontSize: 16, fontWeight: 600 }}>{selectedTemplate.clientName}</div>
+              <button className="icon-btn" onClick={handleCloseTemplate}>
+                <Icon name="x" size={16} />
+              </button>
+            </div>
+            <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
+                <span className="badge badge-ok">Versão: {selectedTemplate.version}</span>
+                <span className="badge badge-progress">
+                  Atualizado: {new Date(selectedTemplate.lastUpdated).toLocaleDateString('pt-PT')}
+                </span>
+                <span className="badge">{selectedTemplate.totalItems} itens</span>
+              </div>
+              
+              {selectedTemplate.sections.map((section, idx) => (
+                <div key={section.id} style={{ marginBottom: 16 }}>
+                  <div style={{ 
+                    fontSize: 14, 
+                    fontWeight: 600, 
+                    color: '#1E2A3A',
+                    padding: '8px 0',
+                    borderBottom: '1px solid #E5E7EB',
+                    marginBottom: 8,
+                    display: 'flex',
+                    justifyContent: 'space-between'
+                  }}>
+                    <span>{section.title}</span>
+                    <span style={{ fontSize: 12, color: '#888', fontWeight: 400 }}>
+                      {section.items.length} itens
+                    </span>
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: 20 }}>
+                    {section.items.map(item => (
+                      <li key={item.id} style={{ 
+                        fontSize: 13, 
+                        color: '#4B5563',
+                        padding: '4px 0',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center'
+                      }}>
+                        <span>{item.label}</span>
+                        {item.weight > 1 && (
+                          <span style={{ 
+                            fontSize: 11, 
+                            color: '#888',
+                            background: '#F3F4F6',
+                            padding: '1px 10px',
+                            borderRadius: 10
+                          }}>
+                            Peso: {item.weight}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={handleCloseTemplate}>Fechar</button>
+              <button 
+                className="btn btn-danger" 
+                onClick={() => {
+                  handleDeleteTemplate(selectedTemplate.clientId);
+                  handleCloseTemplate();
+                }}
+              >
+                <Icon name="trash" size={14} /> Remover
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Grid de templates */}
+      <div className="templates-grid">
+        {filteredTemplates.map(template => (
+          <div key={template.id} className="template-card">
+            <div className="template-card-header">
+              <h3 className="client-name" title={template.name}>
+                {template.name}
+              </h3>
+              <span className="badge">{template.sections} secções</span>
+            </div>
+            <div className="template-card-body">
+              <p style={{ margin: '0 0 8px 0' }}>
+                <strong>{template.items}</strong> itens de inspeção
+              </p>
+              <p style={{ fontSize: 12, color: '#888', margin: '0 0 12px 0' }}>
+                Atualizado: {new Date(template.lastUpdated).toLocaleDateString('pt-PT')}
+              </p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button 
+                  className="btn btn-sm btn-secondary"
+                  onClick={() => handleViewTemplate(template.id)}
+                >
+                  👁️ Ver detalhes
+                </button>
+                <button 
+                  className="btn btn-sm btn-danger"
+                  onClick={() => handleDeleteTemplate(template.id)}
+                  style={{ padding: '4px 10px' }}
+                >
+                  <Icon name="trash" size={12} />
+                </button>
+              </div>
+            </div>
           </div>
         ))}
       </div>
+
+      {filteredTemplates.length === 0 && (
+        <div className="empty-state">
+          <div style={{ fontSize: 48, marginBottom: 16 }}>📂</div>
+          <p style={{ fontSize: 16, color: '#4B5563', margin: 0 }}>
+            {searchTerm ? 'Nenhum cliente encontrado com esse termo.' : 'Nenhum template carregado.'}
+          </p>
+          <p style={{ color: '#888', fontSize: 14 }}>
+            {searchTerm ? 'Tente outro termo de busca.' : 'Clique em "Importar Excel" para carregar os templates do arquivo.'}
+          </p>
+        </div>
+      )}
+
+      <style>{`
+        .templates-page {
+          padding: 0;
+        }
+        
+        .page-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          flex-wrap: wrap;
+          gap: 16px;
+          margin-bottom: 20px;
+        }
+        
+        .page-title {
+          font-size: 18px;
+          font-weight: 600;
+          color: #1E2A3A;
+        }
+        
+        .page-sub {
+          font-size: 13px;
+          color: #888;
+          margin-top: 2px;
+        }
+        
+        .header-actions {
+          display: flex;
+          gap: 10px;
+          flex-wrap: wrap;
+          align-items: center;
+        }
+        
+        .search-input {
+          padding: 8px 14px;
+          border: 1px solid #D1D5DB;
+          border-radius: 6px;
+          font-size: 13px;
+          min-width: 200px;
+          background: white;
+        }
+        
+        .search-input:focus {
+          outline: none;
+          border-color: #3B82F6;
+          box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        
+        .templates-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+          gap: 16px;
+          margin-top: 16px;
+        }
+        
+        .template-card {
+          background: white;
+          border: 1px solid #E5E7EB;
+          border-radius: 10px;
+          padding: 16px 18px;
+          transition: all 0.2s ease;
+        }
+        
+        .template-card:hover {
+          border-color: #3B82F6;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        
+        .template-card-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 10px;
+        }
+        
+        .client-name {
+          margin: 0;
+          font-size: 15px;
+          font-weight: 500;
+          color: #1E2A3A;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          max-width: 160px;
+        }
+        
+        .badge {
+          background: #F3F4F6;
+          padding: 2px 12px;
+          border-radius: 12px;
+          font-size: 11px;
+          color: #4B5563;
+          font-weight: 500;
+          white-space: nowrap;
+        }
+        
+        .badge-ok {
+          background: #D1FAE5;
+          color: #065F46;
+        }
+        
+        .badge-progress {
+          background: #DBEAFE;
+          color: #1E40AF;
+        }
+        
+        .template-card-body {
+          color: #6B7280;
+          font-size: 13px;
+        }
+        
+        .btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 8px 16px;
+          border: none;
+          border-radius: 6px;
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+        
+        .btn-primary {
+          background: #1E2A3A;
+          color: white;
+        }
+        
+        .btn-primary:hover {
+          background: #2D3A4A;
+        }
+        
+        .btn-secondary {
+          background: #F3F4F6;
+          color: #374151;
+        }
+        
+        .btn-secondary:hover {
+          background: #E5E7EB;
+        }
+        
+        .btn-danger {
+          background: #FEF2F2;
+          color: #DC2626;
+        }
+        
+        .btn-danger:hover {
+          background: #FEE2E2;
+        }
+        
+        .btn-sm {
+          padding: 4px 12px;
+          font-size: 12px;
+        }
+        
+        .empty-state {
+          text-align: center;
+          padding: 60px 20px;
+          background: #F9FAFB;
+          border-radius: 12px;
+          border: 1px dashed #D1D5DB;
+        }
+        
+        .template-detail-modal {
+          max-width: 700px !important;
+          max-height: 90vh;
+        }
+        
+        .template-detail-modal .modal-body {
+          padding: 16px 20px;
+        }
+        
+        @media (max-width: 600px) {
+          .page-header {
+            flex-direction: column;
+          }
+          
+          .header-actions {
+            width: 100%;
+          }
+          
+          .search-input {
+            min-width: 100%;
+          }
+          
+          .templates-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+      `}</style>
     </div>
   );
 }
 
+// ============================================================
+// AUDIT PAGE
+// ============================================================
 export function AuditPage({ auditLogs }) {
+  const [filter, setFilter] = useState('all');
+  const [search, setSearch] = useState('');
+
+  let filtered = auditLogs;
+  if (filter !== 'all') {
+    filtered = filtered.filter(log => log.type === filter);
+  }
+  if (search) {
+    const term = search.toLowerCase();
+    filtered = filtered.filter(log => 
+      log.user.toLowerCase().includes(term) || 
+      log.action.toLowerCase().includes(term) ||
+      log.detail.toLowerCase().includes(term)
+    );
+  }
+
   return (
     <div>
       <div className="page-header">
-        <div><div className="page-title">Registo de Auditoria (Log)</div><div className="page-sub">Entradas, saídas e ações no sistema</div></div>
+        <div>
+          <div className="page-title">Registo de Auditoria</div>
+          <div className="page-sub">{auditLogs.length} registos • {filtered.length} filtrados</div>
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <input
+            type="text"
+            placeholder="Buscar..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ padding: '6px 12px', border: '1px solid #D1D5DB', borderRadius: 6, fontSize: 13 }}
+          />
+          <select 
+            value={filter} 
+            onChange={(e) => setFilter(e.target.value)}
+            style={{ padding: '6px 12px', border: '1px solid #D1D5DB', borderRadius: 6, fontSize: 13, background: 'white' }}
+          >
+            <option value="all">Todos</option>
+            <option value="login">Login</option>
+            <option value="logout">Logout</option>
+            <option value="schedule">Agendamento</option>
+            <option value="notification">Notificações</option>
+            <option value="capa_alert">Alertas CAPA</option>
+          </select>
+        </div>
       </div>
       <div className="table-wrap">
         <table className="audit-table">
-          <thead><tr><th>Data e Hora</th><th>Utilizador</th><th>Ação</th><th>Detalhes</th></tr></thead>
+          <thead>
+            <tr>
+              <th>Data/Hora</th>
+              <th>Utilizador</th>
+              <th>Ação</th>
+              <th>Tipo</th>
+              <th>Detalhes</th>
+            </tr>
+          </thead>
           <tbody>
-            {auditLogs.length === 0 && <tr><td colSpan={4} style={{textAlign: 'center', padding: '20px'}}>Nenhum registo ainda.</td></tr>}
-            {auditLogs.map(log => (
+            {filtered.length === 0 && (
+              <tr><td colSpan={5} style={{ textAlign: 'center', padding: '30px', color: '#888' }}>
+                {search ? 'Nenhum registo encontrado com esse termo.' : 'Nenhum registo ainda.'}
+              </td></tr>
+            )}
+            {filtered.map(log => (
               <tr key={log.id}>
-                <td>{new Date(log.timestamp).toLocaleString("pt-PT")}</td>
-                <td>{log.user}</td>
-                <td><span className={`badge ${log.type === "login" ? "badge-ok" : log.type === "logout" ? "badge-closed" : "badge-progress"}`}>{log.action}</span></td>
-                <td>{log.detail}</td>
+                <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>
+                  {new Date(log.timestamp).toLocaleString('pt-PT')}
+                </td>
+                <td style={{ fontWeight: 500 }}>{log.user}</td>
+                <td>{log.action}</td>
+                <td>
+                  <span className={`badge ${
+                    log.type === 'login' ? 'badge-ok' : 
+                    log.type === 'logout' ? 'badge-closed' : 
+                    log.type === 'capa_alert' ? 'badge-danger' : 
+                    'badge-progress'
+                  }`}>
+                    {log.type}
+                  </span>
+                </td>
+                <td style={{ fontSize: 13, color: '#4B5563' }}>{log.detail}</td>
               </tr>
             ))}
           </tbody>
@@ -170,11 +651,24 @@ export function AuditPage({ auditLogs }) {
   );
 }
 
+// ============================================================
+// SETTINGS PAGE
+// ============================================================
 export function SettingsPage() {
   const fileInputRef = useRef(null);
+  const [backupSize, setBackupSize] = useState(null);
+
+  const getStorageSize = () => {
+    let total = 0;
+    for (let key in localStorage) {
+      if (localStorage.hasOwnProperty(key)) {
+        total += localStorage[key].length * 2; // UTF-16
+      }
+    }
+    return total;
+  };
 
   const handleExport = () => {
-    // Collect all FIMS data from localStorage
     const backupData = {
       fims_inspections: JSON.parse(localStorage.getItem("fims_inspections") || "[]"),
       fims_users: JSON.parse(localStorage.getItem("fims_users") || "[]"),
@@ -185,7 +679,10 @@ export function SettingsPage() {
       fims_announcements: JSON.parse(localStorage.getItem("fims_announcements") || "[]"),
       fims_dismissed: JSON.parse(localStorage.getItem("fims_dismissed") || "[]"),
       fims_current_user: JSON.parse(localStorage.getItem("fims_current_user") || "null"),
-      exportDate: new Date().toISOString()
+      fims_templates: JSON.parse(localStorage.getItem("fims_templates") || "{}"),
+      fims_template_clients: JSON.parse(localStorage.getItem("fims_template_clients") || "[]"),
+      exportDate: new Date().toISOString(),
+      version: "FIMS v1.0.0"
     };
 
     const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: "application/json" });
@@ -193,14 +690,18 @@ export function SettingsPage() {
     const link = document.createElement("a");
     link.href = url;
     link.download = `FIMS_Backup_${new Date().toISOString().split("T")[0]}.json`;
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleImport = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    if (!window.confirm("Restoring data will OVERWRITE everything currently in the app. Are you sure?")) {
+    if (!window.confirm("⚠️ ATENÇÃO: Restaurar um backup irá SOBRESCREVER todos os dados atuais. Tem certeza?")) {
+      e.target.value = '';
       return;
     }
 
@@ -209,49 +710,111 @@ export function SettingsPage() {
       try {
         const data = JSON.parse(event.target.result);
         
-        // Restore all keys to localStorage
+        // Restaurar todos os dados
         Object.keys(data).forEach(key => {
-          if (key !== "exportDate" && data[key] !== null) {
+          if (key !== "exportDate" && key !== "version" && data[key] !== null && data[key] !== undefined) {
             localStorage.setItem(key, JSON.stringify(data[key]));
           }
         });
 
-        alert("Backup restored successfully! The app will now reload.");
+        alert("✅ Backup restaurado com sucesso! A aplicação vai recarregar.");
         window.location.reload();
       } catch (err) {
-        alert("Error: Invalid backup file.");
+        alert("❌ Erro: Arquivo de backup inválido.");
+        console.error(err);
       }
     };
     reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const handleClearTemplates = () => {
+    if (!window.confirm("⚠️ Tem certeza que deseja remover TODOS os templates importados?")) return;
+    localStorage.removeItem('fims_templates');
+    localStorage.removeItem('fims_template_clients');
+    alert("Templates removidos com sucesso.");
+    window.location.reload();
+  };
+
+  const handleClearAll = () => {
+    if (!window.confirm("⚠️ ATENÇÃO: Isso irá apagar TODOS os dados (inspeções, utilizadores, templates, etc.). Tem certeza?")) return;
+    if (!window.confirm("⚠️ ÚLTIMO AVISO: Esta ação é IRREVERSÍVEL. Continuar?")) return;
+    localStorage.clear();
+    alert("Todos os dados foram removidos. A aplicação vai recarregar.");
+    window.location.reload();
   };
 
   return (
     <div>
       <div className="page-header">
-        <div><div className="page-title">Configurações do Sistema</div><div className="page-sub">Backup, Recuperação e Parâmetros</div></div>
+        <div>
+          <div className="page-title">⚙️ Configurações do Sistema</div>
+          <div className="page-sub">Backup, recuperação e gestão de dados</div>
+        </div>
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
-        <h3 style={{ fontSize: 15, marginBottom: 12, color: "#1E2A3A" }}>Backup & Recovery</h3>
+        <h3 style={{ fontSize: 15, marginBottom: 12, color: "#1E2A3A" }}>💾 Backup & Recovery</h3>
         <p style={{ fontSize: 13, color: "#666", marginBottom: 16 }}>
-          Download a complete backup file of all inspections, users, schedules, and logs. Keep this file safe. If you ever lose data (e.g., phone reset, browser cache cleared), you can upload this file to restore everything instantly.
+          Faça o download de um ficheiro de backup completo com todos os dados (inspeções, utilizadores, templates, logs, etc.). 
+          Guarde este ficheiro num local seguro. Se perder os dados, pode restaurá-los instantaneamente.
         </p>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <button className="btn btn-primary" onClick={handleExport}>
             <Icon name="download" size={14} /> Download Backup (.json)
           </button>
           <button className="btn btn-secondary" onClick={() => fileInputRef.current.click()}>
-            <Icon name="file" size={14} /> Restore from Backup
+            <Icon name="upload" size={14} /> Restaurar Backup
           </button>
           <input ref={fileInputRef} type="file" accept=".json" style={{ display: "none" }} onChange={handleImport} />
         </div>
       </div>
 
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 15, marginBottom: 12, color: "#1E2A3A" }}>📊 Estatísticas</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+          {[
+            ["Inspeções", JSON.parse(localStorage.getItem("fims_inspections") || "[]").length],
+            ["Utilizadores", JSON.parse(localStorage.getItem("fims_users") || "[]").length],
+            ["Localizações", JSON.parse(localStorage.getItem("fims_locations") || "[]").length],
+            ["Templates", JSON.parse(localStorage.getItem("fims_template_clients") || "[]").length],
+            ["Registos", JSON.parse(localStorage.getItem("fims_logs") || "[]").length],
+            ["Armazenamento", (getStorageSize() / 1024).toFixed(1) + ' KB']
+          ].map(([k, v]) => (
+            <div key={k} style={{ background: "#F8F7F4", borderRadius: 8, padding: "10px 14px" }}>
+              <div style={{ fontSize: 11, color: "#888" }}>{k}</div>
+              <div style={{ fontSize: 18, fontWeight: 600, marginTop: 2 }}>{v}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 15, marginBottom: 12, color: "#1E2A3A" }}>🗑️ Gestão de Dados</h3>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <button className="btn btn-danger" onClick={handleClearTemplates}>
+            <Icon name="trash" size={14} /> Remover Todos os Templates
+          </button>
+          <button className="btn btn-danger" onClick={handleClearAll} style={{ background: '#DC2626' }}>
+            <Icon name="trash" size={14} /> 🔴 Apagar Todos os Dados
+          </button>
+        </div>
+        <p style={{ fontSize: 12, color: "#888", marginTop: 12 }}>
+          ⚠️ Estas ações são irreversíveis. Faça um backup antes de proceder.
+        </p>
+      </div>
+
       <div className="card">
-        <h3 style={{ fontSize: 15, marginBottom: 12, color: "#1E2A3A" }}>System Information</h3>
+        <h3 style={{ fontSize: 15, marginBottom: 12, color: "#1E2A3A" }}>ℹ️ Informação do Sistema</h3>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
-          {[["Versão", "FIMS v1.0.0"], ["Ambiente", "Produção (Frontend)"], ["Base de Dados", "LocalStorage"], ["Stack", "React + Vite"]].map(([k, v]) => (
-            <div key={k} style={{ background: "#F8F7F4", borderRadius: 8, padding: "10px 12px" }}>
+          {[
+            ["Versão", "FIMS v1.0.0"],
+            ["Ambiente", "Produção (Frontend)"],
+            ["Base de Dados", "LocalStorage"],
+            ["Stack", "React + Vite"],
+            ["Templates", JSON.parse(localStorage.getItem("fims_template_clients") || "[]").length + " clientes"]
+          ].map(([k, v]) => (
+            <div key={k} style={{ background: "#F8F7F4", borderRadius: 8, padding: "10px 14px" }}>
               <div style={{ fontSize: 11, color: "#888" }}>{k}</div>
               <div style={{ fontSize: 13, fontWeight: 500, marginTop: 2 }}>{v}</div>
             </div>

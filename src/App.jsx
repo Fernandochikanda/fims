@@ -1,3 +1,4 @@
+// /src/App.jsx
 import { useState, useEffect } from "react";
 import { Icon } from "./lib/icons";
 import Sidebar from "./components/Sidebar";
@@ -18,36 +19,78 @@ import ScheduleModal from "./components/ScheduleModal";
 import RescheduleModal from "./components/RescheduleModal";
 import BulkScheduleModal from "./components/BulkScheduleModal";
 import { UsersPage, LocationsPage, ReportsPage, TemplatesPage, AuditPage, SettingsPage } from "./pages/Management";
-import { SEED_USERS, SEED_LOCATIONS, ROLES } from "./data/constants";
+import { SEED_USERS, SEED_LOCATIONS, ROLES, getClientTemplate } from "./data/constants";
 import { genSeedInspections, genId } from "./lib/helpers";
-import { getTemplate } from "./data/clientTemplates";
 import { exportToICS } from "./lib/icsExporter";
 import { LangProvider } from "./context/LangContext";
 import { CommsProvider, useComms } from "./context/CommsContext";
+import { getTemplateByClientName } from "./utils/excelTemplateImporter";
 
 function NewInspectionModal({ locations, users, currentUser, onClose, onCreate }) {
   const [locId, setLocId] = useState("");
   const [inspectorId, setInspectorId] = useState(currentUser.role === ROLES.INSPECTOR ? currentUser.id : "");
+  const [selectedClient, setSelectedClient] = useState(null);
 
-  const handle = () => {
+  const handleLocationChange = (e) => {
+    const id = e.target.value;
+    setLocId(id);
+    if (id) {
+      const loc = locations.find(l => l.id === Number(id));
+      setSelectedClient(loc);
+    } else {
+      setSelectedClient(null);
+    }
+  };
+
+  const handleCreate = () => {
     if (!locId) return;
     const loc = locations.find(l => l.id === Number(locId));
+    if (!loc) return;
+    
     const inspector = users.find(u => u.id === Number(inspectorId)) || null;
     
-    const template = getTemplate(loc.name);
-    const templateSections = template.sections;
+    // Buscar template do cliente (primeiro localStorage, depois fallback)
+    const template = getClientTemplate(loc.name);
+    const templateSections = template.sections || [];
+    
+    // Criar itens e seções a partir do template
+    const items = templateSections.flatMap(s => 
+      (s.items || []).map(item => ({ 
+        ...item, 
+        section_id: s.id, 
+        score: null, 
+        comment: "", 
+        photos: [] 
+      }))
+    );
+    
+    const sections = templateSections.map(s => ({ 
+      id: s.id, 
+      title: s.title || s.name,
+      observation: "", 
+      photos: [] 
+    }));
     
     const insp = {
-      id: genId(), location_id: loc.id, location_name: loc.name,
+      id: genId(), 
+      location_id: loc.id, 
+      location_name: loc.name,
       inspector_id: inspector ? inspector.id : null, 
       inspector_name: inspector ? inspector.name : null,
-      supervisor_id: 3, supervisor_name: "Ana Sitoe",
+      supervisor_id: 3, 
+      supervisor_name: "Ana Sitoe",
       status: inspector ? "pending_acceptance" : "unassigned", 
-      accepted: null, score_pct: null, 
+      accepted: null, 
+      score_pct: null, 
       date: new Date().toISOString().split("T")[0],
-      items: templateSections.flatMap(s => s.items.map(item => ({ ...item, section_id: s.id, score: null, comment: "", photos: [] }))),
-      sections: templateSections.map(s => ({ id: s.id, observation: "", photos: [] })),
-      notes: "", alert_level: "ok", type: "inspection", priority: "normal"
+      items: items,
+      sections: sections,
+      notes: "", 
+      alert_level: "ok", 
+      type: "inspection", 
+      priority: "normal",
+      template_id: template.clientId || "DEFAULT",
+      template_version: template.version || "1.0"
     };
     onCreate(insp);
   };
@@ -55,15 +98,38 @@ function NewInspectionModal({ locations, users, currentUser, onClose, onCreate }
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-header"><div style={{ fontSize: 15, fontWeight: 500 }}>Nova Inspeção (Dispatch)</div><button className="icon-btn" onClick={onClose}><Icon name="x" size={14} /></button></div>
+        <div className="modal-header">
+          <div style={{ fontSize: 15, fontWeight: 500 }}>Nova Inspeção (Dispatch)</div>
+          <button className="icon-btn" onClick={onClose}><Icon name="x" size={14} /></button>
+        </div>
         <div className="modal-body">
           <div className="form-group">
             <label className="form-label">Localização (Cliente) *</label>
-            <select className="form-select" value={locId} onChange={e => setLocId(e.target.value)}>
+            <select className="form-select" value={locId} onChange={handleLocationChange}>
               <option value="">Selecionar localização...</option>
               {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
             </select>
           </div>
+          {selectedClient && (
+            <div style={{ 
+              background: '#F3F4F6', 
+              padding: '10px 12px', 
+              borderRadius: 6,
+              marginBottom: 12,
+              fontSize: 13
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>📋 Template:</span>
+                <span style={{ fontWeight: 500 }}>
+                  {getClientTemplate(selectedClient.name).clientName || 'Padrão'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#6B7280', marginTop: 4 }}>
+                <span>{getClientTemplate(selectedClient.name).sections?.length || 0} secções</span>
+                <span>{getClientTemplate(selectedClient.name).totalItems || 0} itens</span>
+              </div>
+            </div>
+          )}
           {currentUser.role !== ROLES.INSPECTOR && (
             <div className="form-group">
               <label className="form-label">Inspetor (Leave empty for Unassigned Queue)</label>
@@ -74,7 +140,10 @@ function NewInspectionModal({ locations, users, currentUser, onClose, onCreate }
             </div>
           )}
         </div>
-        <div className="modal-footer"><button className="btn btn-secondary" onClick={onClose}>Cancelar</button><button className="btn btn-primary" onClick={handle} disabled={!locId}>Criar Tarefa</button></div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" onClick={handleCreate} disabled={!locId}>Criar Tarefa</button>
+        </div>
       </div>
     </div>
   );
@@ -129,33 +198,83 @@ function AppContent() {
     setAuditLogs(prev => [{ id: genId(), timestamp: new Date().toISOString(), user: user.name, action, type, detail }, ...prev]);
   };
 
-  const handleLogin = (user) => { setCurrentUser(user); localStorage.setItem("fims_current_user", JSON.stringify(user)); addAuditLog(user, "Login", "login", "Entrou no sistema"); };
-  const handleLogout = () => { if (currentUser) addAuditLog(currentUser, "Logout", "logout", "Saiu do sistema"); localStorage.removeItem("fims_current_user"); setCurrentUser(null); setPage("dashboard"); };
-  const handleNavigate = (p) => { setPage(p); setViewingInspection(null); setEditingInspection(null); if (p === "new-inspection") setShowNewModal(true); };
-  const handleViewInspection = (insp) => { setViewingInspection(insp); setEditingInspection(null); setPage("inspections"); };
+  const handleLogin = (user) => { 
+    setCurrentUser(user); 
+    localStorage.setItem("fims_current_user", JSON.stringify(user)); 
+    addAuditLog(user, "Login", "login", "Entrou no sistema"); 
+  };
+  
+  const handleLogout = () => { 
+    if (currentUser) addAuditLog(currentUser, "Logout", "logout", "Saiu do sistema"); 
+    localStorage.removeItem("fims_current_user"); 
+    setCurrentUser(null); 
+    setPage("dashboard"); 
+  };
+  
+  const handleNavigate = (p) => { 
+    setPage(p); 
+    setViewingInspection(null); 
+    setEditingInspection(null); 
+    if (p === "new-inspection") setShowNewModal(true); 
+  };
+  
+  const handleViewInspection = (insp) => { 
+    setViewingInspection(insp); 
+    setEditingInspection(null); 
+    setPage("inspections"); 
+  };
   
   const handleStartInspection = (insp) => {
-    let updated = insp;
+    let updated = { ...insp };
     if (insp.status === "pending" || insp.status === "needs_corrections") {
-      updated = { ...insp, status: "in_progress" };
+      updated.status = "in_progress";
     }
+    
+    // Se não tem items, carregar do template
     if (!updated.items || updated.items.length === 0) {
-      const template = getTemplate(updated.location_name);
-      const templateSections = template.sections;
-      updated.items = templateSections.flatMap(s => s.items.map(item => ({ ...item, section_id: s.id, score: null, comment: "", photos: [] })));
-      updated.sections = templateSections.map(s => ({ id: s.id, observation: "", photos: [] }));
+      const template = getClientTemplate(updated.location_name);
+      const templateSections = template.sections || [];
+      
+      updated.items = templateSections.flatMap(s => 
+        (s.items || []).map(item => ({ 
+          ...item, 
+          section_id: s.id, 
+          score: null, 
+          comment: "", 
+          photos: [] 
+        }))
+      );
+      
+      updated.sections = templateSections.map(s => ({ 
+        id: s.id, 
+        title: s.title || s.name,
+        observation: "", 
+        photos: [] 
+      }));
+      
+      updated.template_id = template.clientId || "DEFAULT";
+      updated.template_version = template.version || "1.0";
     }
+    
     setInspections(prev => prev.map(i => i.id === updated.id ? updated : i));
-    setEditingInspection(updated); setViewingInspection(null); setPage("inspections");
+    setEditingInspection(updated); 
+    setViewingInspection(null); 
+    setPage("inspections");
   };
-  const handleSaveInspection = (updated) => { setInspections(prev => prev.map(i => i.id === updated.id ? updated : i)); setEditingInspection(updated); };
+  
+  const handleSaveInspection = (updated) => { 
+    setInspections(prev => prev.map(i => i.id === updated.id ? updated : i)); 
+    setEditingInspection(updated); 
+  };
   
   const handleSubmitInspection = (updated) => {
-    setInspections(prev => prev.map(i => i.id === updated.id ? updated : i)); setEditingInspection(null); setPage("inspections");
+    setInspections(prev => prev.map(i => i.id === updated.id ? updated : i)); 
+    setEditingInspection(null); 
+    setPage("inspections");
     addAuditLog(currentUser, "Notificação Enviada", "notification", `Email e WhatsApp enviados para o Supervisor (${updated.supervisor_name}) sobre a inspeção em ${updated.location_name}`);
     notify(3, `Nova inspeção submetida por ${currentUser.name} para ${updated.location_name}.`, "inspections");
     
-    const lowScoreItems = updated.items.filter(i => i.score !== null && i.score <= 2);
+    const lowScoreItems = (updated.items || []).filter(i => i.score !== null && i.score <= 2);
     if (lowScoreItems.length > 0) {
       const capaDeadline = new Date();
       capaDeadline.setHours(capaDeadline.getHours() + 48);
@@ -165,7 +284,12 @@ function AppContent() {
     }
   };
   
-  const handleCreateInspection = (insp) => { setInspections(prev => [insp, ...prev]); setShowNewModal(false); setEditingInspection(insp); setPage("inspections"); };
+  const handleCreateInspection = (insp) => { 
+    setInspections(prev => [insp, ...prev]); 
+    setShowNewModal(false); 
+    setEditingInspection(insp); 
+    setPage("inspections"); 
+  };
   
   const handleUpdateInspection = (updated) => {
     setInspections(prev => prev.map(i => i.id === updated.id ? updated : i)); 
@@ -175,15 +299,74 @@ function AppContent() {
   };
 
   const handleCreateSchedule = (tasks) => {
-    setInspections(prev => [...tasks, ...prev]); setShowScheduleModal(false);
-    addAuditLog(currentUser, "Despacho Criado", "schedule", `Agendou ${tasks.length} tarefa(s) para ${tasks[0].inspector_name}`);
-    tasks.forEach(t => { if(t.inspector_id) notify(t.inspector_id, `Nova tarefa agendada para ${t.date} no local ${t.location_name}.`, "schedule"); });
+    // Processar cada tarefa para garantir template
+    const tasksWithTemplates = tasks.map(task => {
+      const template = getClientTemplate(task.location_name);
+      const templateSections = template.sections || [];
+      
+      return {
+        ...task,
+        items: templateSections.flatMap(s => 
+          (s.items || []).map(item => ({ 
+            ...item, 
+            section_id: s.id, 
+            score: null, 
+            comment: "", 
+            photos: [] 
+          }))
+        ),
+        sections: templateSections.map(s => ({ 
+          id: s.id, 
+          title: s.title || s.name,
+          observation: "", 
+          photos: [] 
+        })),
+        template_id: template.clientId || "DEFAULT",
+        template_version: template.version || "1.0"
+      };
+    });
+    
+    setInspections(prev => [...tasksWithTemplates, ...prev]); 
+    setShowScheduleModal(false);
+    addAuditLog(currentUser, "Despacho Criado", "schedule", `Agendou ${tasksWithTemplates.length} tarefa(s)`);
+    tasksWithTemplates.forEach(t => { 
+      if(t.inspector_id) notify(t.inspector_id, `Nova tarefa agendada para ${t.date} no local ${t.location_name}.`, "schedule"); 
+    });
   };
 
   const handleBulkSchedule = (tasks) => {
-    setInspections(prev => [...tasks, ...prev]); setShowBulkModal(false);
-    addAuditLog(currentUser, "Despacho Múltiplo Criado", "schedule", `Agendou ${tasks.length} tarefas via bulk scheduling.`);
-    tasks.forEach(t => { if(t.inspector_id) notify(t.inspector_id, `Nova tarefa agendada para ${t.date} no local ${t.location_name}.`, "schedule"); });
+    const tasksWithTemplates = tasks.map(task => {
+      const template = getClientTemplate(task.location_name);
+      const templateSections = template.sections || [];
+      
+      return {
+        ...task,
+        items: templateSections.flatMap(s => 
+          (s.items || []).map(item => ({ 
+            ...item, 
+            section_id: s.id, 
+            score: null, 
+            comment: "", 
+            photos: [] 
+          }))
+        ),
+        sections: templateSections.map(s => ({ 
+          id: s.id, 
+          title: s.title || s.name,
+          observation: "", 
+          photos: [] 
+        })),
+        template_id: template.clientId || "DEFAULT",
+        template_version: template.version || "1.0"
+      };
+    });
+    
+    setInspections(prev => [...tasksWithTemplates, ...prev]); 
+    setShowBulkModal(false);
+    addAuditLog(currentUser, "Despacho Múltiplo Criado", "schedule", `Agendou ${tasksWithTemplates.length} tarefas via bulk scheduling.`);
+    tasksWithTemplates.forEach(t => { 
+      if(t.inspector_id) notify(t.inspector_id, `Nova tarefa agendada para ${t.date} no local ${t.location_name}.`, "schedule"); 
+    });
   };
 
   const handleDragUpdate = (updated, notifyInspector = true) => {
@@ -232,41 +415,135 @@ function AppContent() {
     <div className="fims-app">
       <Sidebar currentUser={currentUser} activePage={page} onNavigate={handleNavigate} alertCount={alertCount} isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="main">
-        <Topbar title={editingInspection ? editingInspection.location_name : viewingInspection ? viewingInspection.location_name : topBarTitles[page] || "FIMS"} onMenuClick={() => setSidebarOpen(true)} onLogout={handleLogout} currentUser={currentUser} onNavigate={handleNavigate} />
+        <Topbar 
+          title={editingInspection ? editingInspection.location_name : viewingInspection ? viewingInspection.location_name : topBarTitles[page] || "FIMS"} 
+          onMenuClick={() => setSidebarOpen(true)} 
+          onLogout={handleLogout} 
+          currentUser={currentUser} 
+          onNavigate={handleNavigate} 
+        />
         <div className="page scrollbar-thin">
-          {editingInspection ? <InspectionForm inspection={editingInspection} onSave={handleSaveInspection} onSubmit={handleSubmitInspection} onBack={() => { setEditingInspection(null); setPage("inspections"); }} allInspections={inspections} /> 
-          : viewingInspection ? <InspectionDetail inspection={viewingInspection} currentUser={currentUser} onBack={() => setViewingInspection(null)} onUpdate={handleUpdateInspection} addAuditLog={addAuditLog} allInspections={inspections} /> 
-          : page === "dashboard" ? (
-            currentUser.role === ROLES.CEO || currentUser.role === ROLES.ADMIN ? <CEODashboard inspections={inspections} locations={locations} auditLogs={auditLogs} currentUser={currentUser} />
-            : currentUser.role === ROLES.SUPERVISOR ? <SupervisorDashboard inspections={inspections} users={users} currentUser={currentUser} onView={handleViewInspection} />
-            : <InspectorDashboard inspections={inspections} users={users} currentUser={currentUser} onStartInspection={handleStartInspection} onAcceptTask={handleAcceptTask} onDeclineTask={handleDeclineTask} onRequestLeave={handleRequestLeave} />
-          ) : page === "inspections" ? <InspectionsList inspections={inspections} currentUser={currentUser} onView={handleViewInspection} onCreate={() => setShowNewModal(true)} />
-          : page === "report_center" ? <ReportCenter inspections={inspections} locations={locations} users={users} />
-          : page === "messages" ? <Messages users={users} currentUser={currentUser} />
-          : page === "alerts" ? <Alerts inspections={inspections} onView={handleViewInspection} onUpdate={handleUpdateInspection} />
-          : page === "schedule" ? (
+          {editingInspection ? (
+            <InspectionForm 
+              inspection={editingInspection} 
+              onSave={handleSaveInspection} 
+              onSubmit={handleSubmitInspection} 
+              onBack={() => { setEditingInspection(null); setPage("inspections"); }} 
+              allInspections={inspections} 
+            />
+          ) : viewingInspection ? (
+            <InspectionDetail 
+              inspection={viewingInspection} 
+              currentUser={currentUser} 
+              onBack={() => setViewingInspection(null)} 
+              onUpdate={handleUpdateInspection} 
+              addAuditLog={addAuditLog} 
+              allInspections={inspections} 
+            />
+          ) : page === "dashboard" ? (
+            currentUser.role === ROLES.CEO || currentUser.role === ROLES.ADMIN ? 
+              <CEODashboard inspections={inspections} locations={locations} auditLogs={auditLogs} currentUser={currentUser} />
+            : currentUser.role === ROLES.SUPERVISOR ? 
+              <SupervisorDashboard inspections={inspections} users={users} currentUser={currentUser} onView={handleViewInspection} />
+            : 
+              <InspectorDashboard 
+                inspections={inspections} 
+                users={users} 
+                currentUser={currentUser} 
+                onStartInspection={handleStartInspection} 
+                onAcceptTask={handleAcceptTask} 
+                onDeclineTask={handleDeclineTask} 
+                onRequestLeave={handleRequestLeave} 
+              />
+          ) : page === "inspections" ? (
+            <InspectionsList 
+              inspections={inspections} 
+              currentUser={currentUser} 
+              onView={handleViewInspection} 
+              onCreate={() => setShowNewModal(true)} 
+            />
+          ) : page === "report_center" ? (
+            <ReportCenter inspections={inspections} locations={locations} users={users} />
+          ) : page === "messages" ? (
+            <Messages users={users} currentUser={currentUser} />
+          ) : page === "alerts" ? (
+            <Alerts inspections={inspections} onView={handleViewInspection} onUpdate={handleUpdateInspection} />
+          ) : page === "schedule" ? (
             <div>
               <div style={{ marginBottom: 16, display: "flex", justifyContent: "flex-end" }}>
-                <button className="btn btn-secondary btn-sm" onClick={() => exportToICS(inspections)}><Icon name="download" size={13} /> Export to Outlook/Google (.ics)</button>
+                <button className="btn btn-secondary btn-sm" onClick={() => exportToICS(inspections)}>
+                  <Icon name="download" size={13} /> Export to Outlook/Google (.ics)
+                </button>
               </div>
-              <Schedule inspections={inspections} users={users} onUpdate={handleDragUpdate} onOpenModal={() => setShowScheduleModal(true)} onReschedule={setReschedulingTask} onBulkSchedule={() => setShowBulkModal(true)} />
+              <Schedule 
+                inspections={inspections} 
+                users={users} 
+                onUpdate={handleDragUpdate} 
+                onOpenModal={() => setShowScheduleModal(true)} 
+                onReschedule={setReschedulingTask} 
+                onBulkSchedule={() => setShowBulkModal(true)} 
+              />
             </div>
-          )
-          : page === "field_map" ? <LiveMap inspections={inspections} users={users} onRefresh={async () => { /* Future: await api.getInspections() */ return; }} refreshIntervalMs={45000} />
-          : page === "team" ? <Team users={users} inspections={inspections} />
-          : page === "monthly_report" ? <MonthlyReport inspections={inspections} locations={locations} />
-          : page === "reports" ? <ReportsPage inspections={inspections} locations={locations} users={users} />
-          : page === "users" ? <UsersPage users={users} setUsers={setUsers} />
-          : page === "locations" ? <LocationsPage locations={locations} setLocations={setLocations} users={users} inspections={inspections} />
-          : page === "templates" ? <TemplatesPage />
-          : page === "audit" ? <AuditPage auditLogs={auditLogs} />
-          : page === "settings" ? <SettingsPage /> : null}
+          ) : page === "field_map" ? (
+            <LiveMap 
+              inspections={inspections} 
+              users={users} 
+              onRefresh={async () => { return; }} 
+              refreshIntervalMs={45000} 
+            />
+          ) : page === "team" ? (
+            <Team users={users} inspections={inspections} />
+          ) : page === "monthly_report" ? (
+            <MonthlyReport inspections={inspections} locations={locations} />
+          ) : page === "reports" ? (
+            <ReportsPage inspections={inspections} locations={locations} users={users} />
+          ) : page === "users" ? (
+            <UsersPage users={users} setUsers={setUsers} />
+          ) : page === "locations" ? (
+            <LocationsPage locations={locations} setLocations={setLocations} users={users} inspections={inspections} />
+          ) : page === "templates" ? (
+            <TemplatesPage />
+          ) : page === "audit" ? (
+            <AuditPage auditLogs={auditLogs} />
+          ) : page === "settings" ? (
+            <SettingsPage />
+          ) : null}
         </div>
       </div>
-      {showNewModal && <NewInspectionModal locations={locations} users={users} currentUser={currentUser} onClose={() => setShowNewModal(false)} onCreate={handleCreateInspection} />}
-      {showScheduleModal && <ScheduleModal locations={locations} users={users} inspections={inspections} onClose={() => setShowScheduleModal(false)} onCreate={handleCreateSchedule} />}
-      {showBulkModal && <BulkScheduleModal locations={locations} users={users} onClose={() => setShowBulkModal(false)} onCreate={handleBulkSchedule} />}
-      {reschedulingTask && <RescheduleModal inspection={reschedulingTask} users={users} onClose={() => setReschedulingTask(null)} onConfirm={handleConfirmReschedule} />}
+      {showNewModal && (
+        <NewInspectionModal 
+          locations={locations} 
+          users={users} 
+          currentUser={currentUser} 
+          onClose={() => setShowNewModal(false)} 
+          onCreate={handleCreateInspection} 
+        />
+      )}
+      {showScheduleModal && (
+        <ScheduleModal 
+          locations={locations} 
+          users={users} 
+          inspections={inspections} 
+          onClose={() => setShowScheduleModal(false)} 
+          onCreate={handleCreateSchedule} 
+        />
+      )}
+      {showBulkModal && (
+        <BulkScheduleModal 
+          locations={locations} 
+          users={users} 
+          onClose={() => setShowBulkModal(false)} 
+          onCreate={handleBulkSchedule} 
+        />
+      )}
+      {reschedulingTask && (
+        <RescheduleModal 
+          inspection={reschedulingTask} 
+          users={users} 
+          onClose={() => setReschedulingTask(null)} 
+          onConfirm={handleConfirmReschedule} 
+        />
+      )}
     </div>
   );
 }

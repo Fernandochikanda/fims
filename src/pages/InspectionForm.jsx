@@ -1,9 +1,9 @@
+// /src/pages/InspectionForm.jsx
 import { useState, useEffect } from "react";
 import { Icon } from "../lib/icons";
 import { calcScore, isItemComplete, getCategoryHealth, generateAISummary } from "../lib/helpers";
 import { photoStore } from "../lib/photoStore";
-import { TEMPLATE_SECTIONS } from "../data/constants";
-import { getTemplate } from "../data/clientTemplates";
+import { getClientTemplate } from "../data/constants";
 import SignaturePad from "../components/SignaturePad";
 import PhotoUploader from "../components/PhotoUploader";
 import VoiceInput from "../components/VoiceInput";
@@ -13,12 +13,26 @@ export default function InspectionForm({ inspection, onSave, onSubmit, onBack, a
 
   const ensureTemplate = (insp) => {
     if (!insp.items || insp.items.length === 0) {
-      const template = getTemplate(insp.location_name);
-      const templateSections = template.sections;
+      const template = getClientTemplate(insp.location_name);
+      const templateSections = template.sections || [];
+      
       return {
         ...insp,
-        items: templateSections.flatMap(s => s.items.map(item => ({ ...item, section_id: s.id, score: null, comment: "", photos: [] }))),
-        sections: templateSections.map(s => ({ id: s.id, observation: "", photos: [] }))
+        items: templateSections.flatMap(s => 
+          (s.items || []).map(item => ({ 
+            ...item, 
+            section_id: s.id, 
+            score: null, 
+            comment: "", 
+            photos: [] 
+          }))
+        ),
+        sections: templateSections.map(s => ({ 
+          id: s.id, 
+          title: s.title || s.name,
+          observation: "", 
+          photos: [] 
+        }))
       };
     }
     return insp;
@@ -40,14 +54,13 @@ export default function InspectionForm({ inspection, onSave, onSubmit, onBack, a
 
   const initialSections = () => {
     let s = loadDraft("sections", safeInspection.sections || []);
-    if (s.length === 0) s = TEMPLATE_SECTIONS.map(sec => ({ id: sec.id, observation: "", photos: [] }));
     return s;
   };
 
-  const [items, setItems] = useState(() => loadDraft("items", safeInspection.items));
+  const [items, setItems] = useState(() => loadDraft("items", safeInspection.items || []));
   const [sections, setSections] = useState(() => initialSections());
   const [notes, setNotes] = useState(() => loadDraft("notes", safeInspection.notes || ""));
-  const [expandedSections, setExpandedSections] = useState([TEMPLATE_SECTIONS[0].id]);
+  const [expandedSections, setExpandedSections] = useState([]);
   const [saved, setSaved] = useState(false);
   const [photosByItem, setPhotosByItem] = useState({});
   const [validationErrors, setValidationErrors] = useState(null);
@@ -57,18 +70,26 @@ export default function InspectionForm({ inspection, onSave, onSubmit, onBack, a
   const [inspectorSig, setInspectorSig] = useState(() => loadDraft("inspectorSig", safeInspection.inspector_sig || ""));
   const [clientSig, setClientSig] = useState(() => loadDraft("clientSig", safeInspection.client_sig || ""));
 
-  // GPS State
   const [gpsCoords, setGpsCoords] = useState(safeInspection.gps_coords || null);
-
   const [showRefModal, setShowRefModal] = useState(null);
   const [refPhotos, setRefPhotos] = useState([]);
+
+  // Obter seções do template atual
+  const currentTemplate = getClientTemplate(safeInspection.location_name);
+  const templateSections = currentTemplate.sections || [];
+
+  // Expandir primeira seção por padrão
+  useEffect(() => {
+    if (templateSections.length > 0 && expandedSections.length === 0) {
+      setExpandedSections([templateSections[0].id]);
+    }
+  }, [templateSections]);
 
   useEffect(() => {
     const draftData = { items, sections, notes, clientMgrName, inspectorSig, clientSig };
     localStorage.setItem(draftKey, JSON.stringify(draftData));
   }, [items, sections, notes, clientMgrName, inspectorSig, clientSig, draftKey]);
 
-  // GPS Auto-Request Effect
   useEffect(() => {
     if (!gpsCoords && navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
@@ -127,39 +148,36 @@ export default function InspectionForm({ inspection, onSave, onSubmit, onBack, a
   const handleSubmit = () => {
     const errors = [];
     
-    TEMPLATE_SECTIONS.forEach(section => {
+    templateSections.forEach(section => {
       const sItems = items.filter(i => i.section_id === section.id);
       const secData = sections.find(s => s.id === section.id) || { observation: "" };
       const secErrors = [];
 
-      // 1. Category Observation Mandatory
       if (!secData.observation || !secData.observation.trim()) {
         secErrors.push("Category observation is missing (Mandatory).");
       }
 
-      // 2. Category Photos Mandatory (Min 3)
       const catPhotos = photosByItem[section.id] || [];
       if (catPhotos.length < 3) {
         secErrors.push(`Category requires at least 3 photos (has ${catPhotos.length}).`);
       }
 
-      // 3. Item Validation (Notes/Photos mandatory ONLY if score <= 3)
       sItems.forEach(item => {
         if (item.score === null) {
-          secErrors.push(`Item unanswered: "${item.text}".`);
+          secErrors.push(`Item unanswered: "${item.label || item.text}".`);
         } else if (item.score <= 3) {
           if (!item.comment || !item.comment.trim()) {
-            secErrors.push(`Note missing for: "${item.text}" (Score ${item.score}).`);
+            secErrors.push(`Note missing for: "${item.label || item.text}" (Score ${item.score}).`);
           }
           const itemPhotos = photosByItem[item.id] || [];
           if (itemPhotos.length < 3) {
-            secErrors.push(`3 photos required for: "${item.text}" (Score ${item.score}).`);
+            secErrors.push(`3 photos required for: "${item.label || item.text}" (Score ${item.score}).`);
           }
         }
       });
 
       if (secErrors.length > 0) {
-        errors.push({ section: section.name, id: section.id, errors: secErrors });
+        errors.push({ section: section.title || section.name || 'Seção', id: section.id, errors: secErrors });
       }
     });
 
@@ -191,10 +209,16 @@ export default function InspectionForm({ inspection, onSave, onSubmit, onBack, a
         <div>
           <button className="btn btn-secondary btn-sm" onClick={onBack} style={{ marginBottom: 8 }}>← Voltar</button>
           <div className="page-title">{safeInspection.location_name}</div>
-          <div className="page-sub">Relatório de Inspeção · {safeInspection.date}</div>
+          <div className="page-sub">
+            Relatório de Inspeção · {safeInspection.date}
+            {currentTemplate.clientName && (
+              <span style={{ marginLeft: 12, fontSize: 11, color: '#6B7280' }}>
+                📋 {currentTemplate.clientName} ({totalItems} itens)
+              </span>
+            )}
+          </div>
         </div>
         <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-          {/* GPS Display */}
           <div style={{ textAlign: 'right', fontSize: 12 }}>
             <div style={{ color: gpsCoords ? "#0F6E56" : "#888", fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'flex-end' }}>
               <Icon name="location" size={12} /> {gpsCoords ? "GPS Captured" : "Requesting GPS..."}
@@ -209,7 +233,7 @@ export default function InspectionForm({ inspection, onSave, onSubmit, onBack, a
         </div>
       </div>
 
-      {/* Smart Validation Modal */}
+      {/* Validation Modal - same as before */}
       {validationErrors && (
         <div className="modal-overlay" onClick={() => setValidationErrors(null)}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 500 }}>
@@ -237,7 +261,7 @@ export default function InspectionForm({ inspection, onSave, onSubmit, onBack, a
         </div>
       )}
 
-      {/* AI Assistant Panel */}
+      {/* AI Panel - same as before */}
       {showAIPanel && (
         <div className="modal-overlay" onClick={() => setShowAIPanel(false)}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 500 }}>
@@ -247,7 +271,7 @@ export default function InspectionForm({ inspection, onSave, onSubmit, onBack, a
                 <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Executive Summary</div>
                 <div style={{ fontSize: 12, color: "#444" }}>{aiSummary.summary}</div>
               </div>
-              {aiSummary.recommendations.length > 0 && (
+              {aiSummary.recommendations && aiSummary.recommendations.length > 0 && (
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>Recommended Corrective Actions:</div>
                   {aiSummary.recommendations.map((rec, i) => (
@@ -260,9 +284,9 @@ export default function InspectionForm({ inspection, onSave, onSubmit, onBack, a
         </div>
       )}
 
-      {/* Collapsible Categories with +/- Button */}
+      {/* Collapsible Categories */}
       <div style={{ marginBottom: 16 }}>
-        {TEMPLATE_SECTIONS.map(section => {
+        {templateSections.map(section => {
           const sItems = items.filter(i => i.section_id === section.id);
           const secData = sections.find(s => s.id === section.id) || { observation: "" };
           const health = getCategoryHealth(sItems);
@@ -276,11 +300,10 @@ export default function InspectionForm({ inspection, onSave, onSubmit, onBack, a
                 onClick={() => toggleSection(section.id)}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  {/* +/- Minimalist Button */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, borderRadius: 6, background: isExpanded ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.05)', border: `1px solid ${isExpanded ? 'rgba(255,255,255,0.3)' : '#ddd'}` }}>
                     <span style={{ fontSize: 18, lineHeight: 1, fontWeight: 300, color: isExpanded ? '#fff' : '#1E2A3A' }}>{isExpanded ? '−' : '+'}</span>
                   </div>
-                  <span style={{ fontWeight: 600, fontSize: 14 }}>{section.name}</span>
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>{section.title || section.name}</span>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                   <div style={{ width: 60, height: 6, background: "#eee", borderRadius: 3, overflow: "hidden" }}>
@@ -323,7 +346,7 @@ export default function InspectionForm({ inspection, onSave, onSubmit, onBack, a
                     return (
                       <div key={item.id} className={`checklist-item ${scored ? "scored" : ""} ${complete ? "complete" : needsNote || needsPhotos ? "needs-note" : ""}`}>
                         <div style={{ marginBottom: 8, fontSize: 13, display: "flex", alignItems: "flex-start", gap: 6 }}>
-                          <span style={{ flex: 1 }}>{item.text}</span>
+                          <span style={{ flex: 1 }}>{item.label || item.text}</span>
                           {complete && <Icon name="check" size={14} style={{ color: "#0F6E56", flexShrink: 0, marginTop: 1 }} />}
                         </div>
                         
