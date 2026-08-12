@@ -1,3 +1,4 @@
+// /src/lib/photoStore.js
 const PHOTO_DB_NAME = "fims_photos_db";
 const PHOTO_DB_VERSION = 1;
 const PHOTO_STORE = "photos";
@@ -82,6 +83,36 @@ export const photoStore = {
     const tx = db.transaction(PHOTO_STORE, "readwrite");
     tx.objectStore(PHOTO_STORE).delete(id);
     await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+  },
+
+  // NOVA FUNÇÃO: Deletar todas as fotos de uma inspeção
+  async deleteAllForInspection(inspectionId) {
+    try {
+      const db = await openPhotoDB();
+      const tx = db.transaction(PHOTO_STORE, "readwrite");
+      const store = tx.objectStore(PHOTO_STORE);
+      const index = store.index("by_inspection");
+      const range = IDBKeyRange.only(inspectionId);
+      const request = index.openCursor(range);
+      
+      return new Promise((resolve, reject) => {
+        let count = 0;
+        request.onsuccess = (event) => {
+          const cursor = event.target.result;
+          if (cursor) {
+            store.delete(cursor.primaryKey);
+            count++;
+            cursor.continue();
+          } else {
+            tx.done.then(() => resolve(count));
+          }
+        };
+        request.onerror = () => reject(request.error);
+      });
+    } catch (error) {
+      console.error('Erro ao deletar fotos da inspeção:', error);
+      return 0;
+    }
   },
 
   async listPending() {

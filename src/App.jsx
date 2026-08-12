@@ -25,6 +25,7 @@ import { exportToICS } from "./lib/icsExporter";
 import { LangProvider } from "./context/LangContext";
 import { CommsProvider, useComms } from "./context/CommsContext";
 import { getTemplateByClientName } from "./utils/excelTemplateImporter";
+import { photoStore } from "./lib/photoStore";
 
 function NewInspectionModal({ locations, users, currentUser, onClose, onCreate }) {
   const [locId, setLocId] = useState("");
@@ -49,11 +50,9 @@ function NewInspectionModal({ locations, users, currentUser, onClose, onCreate }
     
     const inspector = users.find(u => u.id === Number(inspectorId)) || null;
     
-    // Buscar template do cliente (primeiro localStorage, depois fallback)
     const template = getClientTemplate(loc.name);
     const templateSections = template.sections || [];
     
-    // Criar itens e seções a partir do template
     const items = templateSections.flatMap(s => 
       (s.items || []).map(item => ({ 
         ...item, 
@@ -230,7 +229,6 @@ function AppContent() {
       updated.status = "in_progress";
     }
     
-    // Se não tem items, carregar do template
     if (!updated.items || updated.items.length === 0) {
       const template = getClientTemplate(updated.location_name);
       const templateSections = template.sections || [];
@@ -299,7 +297,6 @@ function AppContent() {
   };
 
   const handleCreateSchedule = (tasks) => {
-    // Processar cada tarefa para garantir template
     const tasksWithTemplates = tasks.map(task => {
       const template = getClientTemplate(task.location_name);
       const templateSections = template.sections || [];
@@ -409,6 +406,33 @@ function AppContent() {
     alert("Folga registada.");
   };
 
+  // ============================================================
+  // FUNÇÃO PARA DELETAR INSPEÇÃO
+  // ============================================================
+  const handleDeleteInspection = async (inspectionId) => {
+    // Encontrar a inspeção para log
+    const insp = inspections.find(i => i.id === inspectionId);
+    
+    // Remover do estado
+    setInspections(prev => prev.filter(i => i.id !== inspectionId));
+    
+    // Remover fotos do IndexedDB
+    try {
+      const deletedCount = await photoStore.deleteAllForInspection(inspectionId);
+      console.log(`Fotos deletadas: ${deletedCount}`);
+    } catch (error) {
+      console.error("Erro ao deletar fotos:", error);
+    }
+    
+    // Registrar no log de auditoria
+    addAuditLog(
+      currentUser, 
+      "Inspeção Eliminada", 
+      "delete", 
+      `Eliminou a inspeção de ${insp?.location_name || "desconhecido"} (${insp?.date || "data desconhecida"}) - Score: ${insp?.score_pct || "N/A"}%`
+    );
+  };
+
   if (!currentUser) return <Login onLogin={handleLogin} />;
 
   return (
@@ -460,7 +484,8 @@ function AppContent() {
               inspections={inspections} 
               currentUser={currentUser} 
               onView={handleViewInspection} 
-              onCreate={() => setShowNewModal(true)} 
+              onCreate={() => setShowNewModal(true)}
+              onDelete={handleDeleteInspection}
             />
           ) : page === "report_center" ? (
             <ReportCenter inspections={inspections} locations={locations} users={users} />
